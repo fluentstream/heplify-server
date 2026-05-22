@@ -35,6 +35,7 @@ type HeplifyServer struct {
 	PromAddr              string   `default:":9096"`
 	PromTargetIP          string   `default:""`
 	PromTargetName        string   `default:""`
+	PromStrictMethods     bool     `default:"false"`
 	DBShema               string   `default:"homer5"`
 	DBDriver              string   `default:"mysql"`
 	DBAddr                string   `default:"localhost:3306"`

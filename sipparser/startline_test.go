@@ -69,3 +69,86 @@ func TestStartLine(t *testing.T) {
 		t.Error("[TestStartLine] Should have a no version err when parsing request line: \"INVITE foo@bar.com SIP/\".")
 	}
 }
+
+func TestStartLineRequestMalformedMethod(t *testing.T) {
+	cases := []struct {
+		name       string
+		val        string
+		wantMethod string
+		wantErr    bool
+	}{
+		{
+			name:       "trailing CR in method",
+			val:        "INVITE\rE sip:alice@example.com SIP/2.0",
+			wantMethod: "INVITE",
+		},
+		{
+			name:       "trailing NUL in method",
+			val:        "REGISTER\x00 sip:alice@example.com SIP/2.0",
+			wantMethod: "REGISTER",
+		},
+		{
+			name:       "extension method",
+			val:        "X-CUSTOM-METHOD sip:alice@example.com SIP/2.0",
+			wantMethod: "X-CUSTOM-METHOD",
+		},
+		{
+			name:    "pure garbage method",
+			val:     "\x01\x02 sip:alice@example.com SIP/2.0",
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := ParseStartLine(tc.val)
+			if tc.wantErr {
+				if s.Error == nil {
+					t.Fatalf("expected error, got method=%q", s.Method)
+				}
+				return
+			}
+			if s.Error != nil {
+				t.Fatalf("unexpected error: %v", s.Error)
+			}
+			if s.Method != tc.wantMethod {
+				t.Errorf("method=%q, want %q", s.Method, tc.wantMethod)
+			}
+		})
+	}
+}
+
+func TestStartLineResponseValidates(t *testing.T) {
+	cases := []struct {
+		name     string
+		val      string
+		wantResp string
+		wantErr  bool
+	}{
+		{name: "standard 200 OK", val: "SIP/2.0 200 OK", wantResp: "200"},
+		{name: "100 Trying", val: "SIP/2.0 100 Trying", wantResp: "100"},
+		{name: "699 boundary", val: "SIP/2.0 699 Custom", wantResp: "699"},
+		{name: "code with no text", val: "SIP/2.0 481", wantResp: "481"},
+		{name: "code 099 (sub-100)", val: "SIP/2.0 099 Bogus", wantErr: true},
+		{name: "code 700 (over-600)", val: "SIP/2.0 700 Bogus", wantErr: true},
+		{name: "non-numeric code", val: "SIP/2.0 ABC Bogus", wantErr: true},
+		{name: "two-digit code", val: "SIP/2.0 20 OK", wantErr: true},
+		{name: "four-digit code", val: "SIP/2.0 2000 OK", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := ParseStartLine(tc.val)
+			if tc.wantErr {
+				if s.Error == nil {
+					t.Fatalf("expected error, got resp=%q", s.Resp)
+				}
+				return
+			}
+			if s.Error != nil {
+				t.Fatalf("unexpected error: %v", s.Error)
+			}
+			if s.Resp != tc.wantResp {
+				t.Errorf("resp=%q, want %q", s.Resp, tc.wantResp)
+			}
+		})
+	}
+}

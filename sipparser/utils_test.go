@@ -20,6 +20,34 @@ func TestCleanWs(t *testing.T) {
 	}
 }
 
+func TestValidMethodToken(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"plain method", "INVITE", "INVITE"},
+		{"trailing CR", "SUBSCRIBE\rE", "SUBSCRIBE"},
+		{"trailing LF", "NOTIFY\n", "NOTIFY"},
+		{"embedded NUL", "INVITE\x00garbage", "INVITE"},
+		{"all garbage", "\x01\x02\x03", ""},
+		{"extension method with hyphen", "X-CUSTOM-METHOD", "X-CUSTOM-METHOD"},
+		{"non-alpha start (digit)", "2ABC", "2ABC"},
+		{"all token punct", "abc.+-!%*_+`'~", "abc.+-!%*_+`'~"},
+		{"space terminates token", "INVITE foo", "INVITE"},
+		{"trailing tab", "BYE\t", "BYE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := validMethodToken(tc.in)
+			if got != tc.want {
+				t.Errorf("validMethodToken(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCleanBrack(t *testing.T) {
 	s := "<sip:foo@bar.com>"
 	if cleanBrack(s) != "sip:foo@bar.com" {

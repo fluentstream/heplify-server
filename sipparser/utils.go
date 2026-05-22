@@ -32,6 +32,41 @@ SUFFIXWS:
 	return s
 }
 
+// isMethodToken reports whether c is a valid byte in a SIP method token
+// per RFC 3261 §25.1 (token = 1*(alphanum / "-" / "." / "!" / "%" / "*" /
+// "_" / "+" / "`" / "'" / "~")). Method names are extension-method
+// productions, which are themselves tokens.
+func isMethodToken(c byte) bool {
+	switch {
+	case c >= 'A' && c <= 'Z':
+		return true
+	case c >= 'a' && c <= 'z':
+		return true
+	case c >= '0' && c <= '9':
+		return true
+	}
+	switch c {
+	case '-', '.', '!', '%', '*', '_', '+', '`', '\'', '~':
+		return true
+	}
+	return false
+}
+
+// validMethodToken returns the longest prefix of s consisting only of
+// SIP token characters (see isMethodToken). If s starts with a non-token
+// byte (or is empty), the empty string is returned. Used to defang
+// CSeq / start-line method values produced from malformed wire SIP --
+// stray CR/LF/NUL bytes from buggy upstreams would otherwise leak into
+// metric labels, log lines and DB rows verbatim.
+func validMethodToken(s string) string {
+	for i := 0; i < len(s); i++ {
+		if !isMethodToken(s[i]) {
+			return s[:i]
+		}
+	}
+	return s
+}
+
 func cleanBrack(s string) string {
 	if s == "" {
 		return ""

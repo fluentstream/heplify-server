@@ -86,11 +86,36 @@ func parseStartLineResponse(s *StartLine) parseStartLineStateFn {
 		return nil
 	}
 	s.Version = parts[0][charPos+1:]
+	// RFC 3261 §7.2 / §21: response code is a 3-digit integer in the
+	// 1xx-6xx range. Anything else is malformed by spec; reject so it
+	// doesn't bleed into metric labels or DB rows as junk.
+	if !isValidRespCode(parts[1]) {
+		s.Error = fmt.Errorf("parseStartLineResponse err: response code must be 3 digits in range 1xx-6xx, got %q", parts[1])
+		return nil
+	}
 	s.Resp = parts[1]
 	if len(parts) > 2 {
 		s.RespText = parts[2]
 	}
 	return nil
+}
+
+// isValidRespCode reports whether s is a 3-digit SIP response code in
+// the 1xx-6xx range (RFC 3261 §7.2 / §21).
+func isValidRespCode(s string) bool {
+	if len(s) != 3 {
+		return false
+	}
+	if s[0] < '1' || s[0] > '6' {
+		return false
+	}
+	if s[1] < '0' || s[1] > '9' {
+		return false
+	}
+	if s[2] < '0' || s[2] > '9' {
+		return false
+	}
+	return true
 }
 
 func parseStartLineRequest(s *StartLine) parseStartLineStateFn {
@@ -102,7 +127,14 @@ func parseStartLineRequest(s *StartLine) parseStartLineStateFn {
 		s.Error = errors.New("parseStartLineRequest err: empty request uri part")
 		return nil
 	}
-	s.Method = parts[0]
+	// Truncate method at first non-token byte (RFC 3261 §25.1). Same
+	// rationale as Cseq.parse -- malformed wire bytes (CR/LF/NUL/etc.)
+	// from buggy upstream SIP must not survive into metric labels.
+	s.Method = validMethodToken(parts[0])
+	if s.Method == "" {
+		s.Error = fmt.Errorf("parseStartLineRequest err: invalid or empty method token in: %q", parts[0])
+		return nil
+	}
 	s.URI = ParseURI(parts[1])
 	if s.URI.Error != nil {
 		s.Error = fmt.Errorf("parseStartLineRequest err: err in URI: %v", s.URI.Error)

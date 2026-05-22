@@ -18,6 +18,41 @@ const (
 	cacheSize = 60 * 1024 * 1024
 )
 
+// knownSIPMethods lists SIP methods recognised for the heplify_method_response
+// metric label when PromStrictMethods is enabled. Anything else (including
+// well-formed but unrecognised extension methods) gets bucketed as "UNKNOWN"
+// to bound metric cardinality. The 1xx-6xx response codes used for the
+// `response` label are validated separately in methodLabel().
+var knownSIPMethods = map[string]struct{}{
+	"INVITE": {}, "ACK": {}, "BYE": {}, "CANCEL": {}, "OPTIONS": {},
+	"REGISTER": {}, "PRACK": {}, "UPDATE": {}, "INFO": {},
+	"SUBSCRIBE": {}, "NOTIFY": {}, "REFER": {}, "MESSAGE": {}, "PUBLISH": {},
+}
+
+// methodLabel sanitises a method/response value for use as a Prometheus
+// label. When PromStrictMethods is off (default), the value is passed
+// through unchanged -- the parser already strips control characters,
+// so this just preserves any extension method on the wire. When on, the
+// value must be either a known SIP method or a 3-digit response code
+// (1xx-6xx); anything else becomes "UNKNOWN", capping cardinality on
+// internet-facing captures where malformed traffic produces unpredictable
+// method tokens.
+func methodLabel(m string) string {
+	if !config.Setting.PromStrictMethods {
+		return m
+	}
+	if _, ok := knownSIPMethods[m]; ok {
+		return m
+	}
+	if len(m) == 3 &&
+		m[0] >= '1' && m[0] <= '6' &&
+		m[1] >= '0' && m[1] <= '9' &&
+		m[2] >= '0' && m[2] <= '9' {
+		return m
+	}
+	return "UNKNOWN"
+}
+
 type Prometheus struct {
 	TargetEmpty bool
 	TargetIP    []string
@@ -70,19 +105,21 @@ func (p *Prometheus) expose(hCh chan *decoder.HEP) {
 		}
 
 		if pkt.SIP != nil && pkt.ProtoType == 1 {
+			respLabel := methodLabel(pkt.SIP.FirstMethod)
+			methLabel := methodLabel(pkt.SIP.CseqMethod)
 			if !p.TargetEmpty {
 				if srcHit {
-					methodResponses.WithLabelValues(srcTarget, "src", pkt.NodeName, pkt.SIP.FirstMethod, pkt.SIP.CseqMethod).Inc()
+					methodResponses.WithLabelValues(srcTarget, "src", pkt.NodeName, respLabel, methLabel).Inc()
 
 					if pkt.SIP.ReasonVal != "" && strings.Contains(pkt.SIP.ReasonVal, "850") {
-						reasonCause.WithLabelValues(srcTarget, extractXR("cause=", pkt.SIP.ReasonVal), pkt.SIP.FirstMethod).Inc()
+						reasonCause.WithLabelValues(srcTarget, extractXR("cause=", pkt.SIP.ReasonVal), respLabel).Inc()
 					}
 				}
 				if dstHit {
-					methodResponses.WithLabelValues(dstTarget, "dst", pkt.NodeName, pkt.SIP.FirstMethod, pkt.SIP.CseqMethod).Inc()
+					methodResponses.WithLabelValues(dstTarget, "dst", pkt.NodeName, respLabel, methLabel).Inc()
 				}
 				if !srcHit && !dstHit {
-					methodResponses.WithLabelValues("unknown", "", pkt.NodeName, pkt.SIP.FirstMethod, pkt.SIP.CseqMethod).Inc()
+					methodResponses.WithLabelValues("unknown", "", pkt.NodeName, respLabel, methLabel).Inc()
 				}
 			}
 
@@ -146,10 +183,10 @@ func (p *Prometheus) expose(hCh chan *decoder.HEP) {
 					continue
 				}
 				p.cache.Set(k, nil)
-				methodResponses.WithLabelValues(pkt.TargetName, "", pkt.NodeName, pkt.SIP.FirstMethod, pkt.SIP.CseqMethod).Inc()
+				methodResponses.WithLabelValues(pkt.TargetName, "", pkt.NodeName, respLabel, methLabel).Inc()
 
 				if pkt.SIP.ReasonVal != "" && strings.Contains(pkt.SIP.ReasonVal, "850") {
-					reasonCause.WithLabelValues(srcTarget, extractXR("cause=", pkt.SIP.ReasonVal), pkt.SIP.FirstMethod).Inc()
+					reasonCause.WithLabelValues(srcTarget, extractXR("cause=", pkt.SIP.ReasonVal), respLabel).Inc()
 				}
 			}
 

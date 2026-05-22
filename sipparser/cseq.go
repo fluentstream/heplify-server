@@ -7,7 +7,7 @@ package sipparser
 
 // Imports from the go standard library
 import (
-	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -24,23 +24,33 @@ type Cseq struct {
 
 func (c *Cseq) parse() error {
 	if len(c.Val) < 3 {
-		return errors.New("Cseq.parse err: length of CSeq is < 3")
+		return fmt.Errorf("Cseq.parse err: length of CSeq is < 3")
 	}
 	s := strings.IndexRune(c.Val, ' ')
 	if s == -1 {
-		return errors.New("Cseq.parse err: lws err with: " + c.Val)
+		return fmt.Errorf("Cseq.parse err: lws err with: %q", c.Val)
 	}
 	if s == 0 {
-		return errors.New("Cseq.parse err: lws at pos 0 in val: " + c.Val)
+		return fmt.Errorf("Cseq.parse err: lws at pos 0 in val: %q", c.Val)
 	}
 	if len(c.Val)-1 < s+1 {
-		return errors.New("Cseq.parse err: first lws is end of line in val: " + c.Val)
+		return fmt.Errorf("Cseq.parse err: first lws is end of line in val: %q", c.Val)
 	}
 	c.Digit = c.Val[0:s]
+	var raw string
 	if c.Val[s+1] != ' ' {
-		c.Method = c.Val[s+1:]
+		raw = c.Val[s+1:]
 	} else {
-		c.Method = cleanWs(c.Val[s+1:])
+		raw = cleanWs(c.Val[s+1:])
+	}
+	// Truncate at the first non-token byte (RFC 3261 §25.1) to defang
+	// stray CR/LF/NUL/etc. coming from malformed upstream SIP. The
+	// truncated prefix still represents what the wire said within the
+	// bounds of valid token grammar; arbitrary garbage that doesn't even
+	// start with a token byte is rejected outright.
+	c.Method = validMethodToken(raw)
+	if c.Method == "" {
+		return fmt.Errorf("Cseq.parse err: invalid or empty method token in val: %q", c.Val)
 	}
 	return nil
 }
