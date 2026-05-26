@@ -1,0 +1,47 @@
+name: ci/cd
+
+# Tag-driven release pipeline. Tags follow the fork scheme
+# <upstream-version>-fluentstream.<n>, e.g. 1.60.3-fluentstream.1.
+#
+# IAM role + ECR repo are managed by the consuming fluentstream/ec2-infra
+# CDK stack:
+#   - Role:  cdk/lib/config/github-deploy-roles.ts
+#   - Repo:  cdk/lib/config/ecr-repos.ts
+#   - Pull:  cdk/lib/constructs/iam/roles-and-policies.ts (captureEcrPolicy)
+on:
+  push:
+    tags:
+      - '*'
+
+env:
+  REPO: 664749300448.dkr.ecr.us-west-2.amazonaws.com/capture/heplify-server
+
+jobs:
+  ci:
+    permissions:
+      id-token: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: ConfigureAWSCredentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-to-assume: arn:aws:iam::664749300448:role/GitHub-actions-fluentstream-heplify-server
+          audience: sts.amazonaws.com
+
+      - name: Set common env vars
+        run: |
+          echo "IMAGE_TAG=${GITHUB_SHA:0:8}" >> $GITHUB_ENV
+          echo "COMMIT_TAG=$(echo $GITHUB_REF | cut -d '/' -f 3)" >> $GITHUB_ENV
+
+      - name: Build and push container image
+        run: |
+          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin $REPO
+          docker build \
+            --tag "$REPO:${COMMIT_TAG}" \
+            --file ./docker/Dockerfile \
+            .
+          docker push "$REPO:${COMMIT_TAG}"
